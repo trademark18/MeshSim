@@ -14,7 +14,7 @@ namespace MeshSim
     class RFNET
     {
         // Can be changed manually to turn debug info on/off
-        public static bool debugging = false;
+        public static bool debugging = true;
         public static List<int> offlineNodeList = new List<int>();
 
         static void Main()
