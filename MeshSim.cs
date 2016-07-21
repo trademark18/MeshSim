@@ -23,7 +23,6 @@ namespace MeshSim
 
         static void Main()
         {
-            //Console.WriteLine(@"Hello TMRh20.  Thank you for your extensive work on the nRF24L01 radios.  I have spent several hours going through your code, and I can appreciate the effort involved in writing it.  This program was developed to be a testbench for new ideas realting to RF mesh networks.");
             Console.WriteLine("\nPlease enter a command.  Enter h for help");
             // Get the command from the user
             List<string> fullCommand = GetCommand();
