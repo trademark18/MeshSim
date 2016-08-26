@@ -18,7 +18,9 @@ namespace MeshSim
     class RFNET
     {
         // Can be changed manually to turn debug info on/off
-        public static bool debugging = true;
+        public static bool debugging = false;
+        public static bool experimentalACK = false;
+        public static long secondsToMap = 0;
         public static List<int> offlineNodeList = new List<int>();
 
         static void Main()
@@ -66,6 +68,14 @@ namespace MeshSim
                 case "c":
                     Console.WriteLine("Checking validity of maps");
                     networkOps.CheckValidity();
+                    Main();
+                    break;
+                case "p":
+                    Console.WriteLine("Packets transmitted: " + RFNET.packetCount);
+                    Main();
+                    break;
+                case "pa":
+                    Console.WriteLine("ACK count: " + RFNET.ackCount);
                     Main();
                     break;
                 case "h":
@@ -189,7 +199,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     break;
                 case "map":
                     int youMap = Convert.ToInt32(fullCommand[1]);// stringToInt(Console.ReadLine());
-                    networkOps.meshNet[youMap - 1].map();
+                    networkOps.meshNet[youMap - 1].DoMap();
                     Main();
                     break;
                 case "hb":
@@ -239,6 +249,9 @@ Enter 'hball' to trigger a heartbeat on each node in random order
 
         // Count of transmitted packets (per launch)
         public static int packetCount = 0;
+
+        // Count of ACK packets (per launch)
+        public static int ackCount = 0;
 
         // Safely checks and coverts a string of user-entered data into an integer
         private static int stringToInt(string input)
@@ -298,6 +311,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
 
             foreach (int physNeighbor in onlinePhysNeighbors)
             {
+                // If we are the last hop on the way to the destination, request a local ACK.
+                outgoingPacket.ACK = outgoingPacket.currentDestination != 255 &&
+                    outgoingPacket.packetType != 9 && 
+                    (outgoingPacket.currentDestination == outgoingPacket.finalDestination);
+                
                 // Fake sendig a packet by simply telling the nodes in range to receive the packet object
                 networkOps.meshNet[physNeighbor - 1].ReceivePacket(outgoingPacket);  //SIM
             }
@@ -334,11 +352,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 }
 
                 // Eavesdropping for tracking-enabled nodes  <--- Get rid of this 
-  /*----->*/    if(incomingPacket.finalDestination != nodeID && incomingPacket.packetType == 3 && incomingPacket.payload.Length > 0)
-                {
+  /*----->*/   // if(incomingPacket.finalDestination != nodeID && incomingPacket.packetType == 3 && incomingPacket.payload.Length > 0)
+               // {
                     // This packet is sent with tracking; Append our address as a return hop
-                    incomingPacket.payload += "," + nodeID;
-                }
+               //     incomingPacket.payload += "," + nodeID;
+               // }
 
                 // If we are not the final destination, pass it on
                 if (incomingPacket.currentDestination != incomingPacket.finalDestination)
@@ -367,7 +385,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 else
                 {
                     // This packet is for me!
-
+                    if (RFNET.experimentalACK && incomingPacket.ACK)
+                    {
+                        packet ACKPacket = packetBuilder.CreateACK(incomingPacket);
+                        SendPacket(ACKPacket);
+                    }
                     // Determine aciton based on packet type
                     switch (incomingPacket.packetType)
                     {
@@ -452,11 +474,15 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                             break;
                         // This is an incoming pokePacket.  My turn to map!
                         case 6:
-                            map();
+                            DoMap();
                             
                             pokeNext(incomingPacket.origin);
                             break;
-
+                        case 9:  // EXPERIMENTAL SIM ONLY
+                            // This is an incoming ACK response. Log it.
+                            Console.WriteLine("ACK received from node " + incomingPacket.origin);
+                            RFNET.ackCount++;
+                            break;
                     }
 
                 }
@@ -510,7 +536,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         private void wwRemap()
         {
             // Map the network with tracking numbers
-            map(true);
+            DoMap();
 
             // Poke the next node to allow it to start mapping.
 
@@ -535,7 +561,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         }
 
         // Map network
-        public void map(bool useTrackingNumbers = false)
+        public void DoMap()
         {
             // Add a FIFO queue to hold next vertecies to visit next
             Queue<int> vertexQueue = new Queue<int>();
@@ -598,7 +624,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 }
                 else // Remote mapping.  Type 3 request and type 4 response
                 {
-                    packet mapPacket = packetBuilder.CreateGetNeighborsPacket(useTrackingNumbers);
+                    packet mapPacket = packetBuilder.CreateGetNeighborsPacket();
                     mapPacket.currentDestination = pathDictionary[v]; // Local lookup of next hop
                     mapPacket.finalDestination = v; // Final destination of this packet
                     mapPacket.origin = nodeID; // Me
@@ -623,10 +649,13 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 }
 
             }
+
+
             if (RFNET.debugging)
             {
-                Console.WriteLine("----------------- Node " + nodeID + " has finished mapping.  ------------------------");
+                Console.WriteLine("----------------- Node " + nodeID + " has finished mapping.   ------------------------");
             }
+            
             visited.Clear();
         }
 
@@ -693,6 +722,10 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         // Packet data (check proper use of generic object?)
         public string payload;
 
+        // Packet ACK field <-- This is part of the Nordic spec for the packet.  This isn't part of the header we actually use, and the packet object
+        // on the arduino will not have this declaration.
+        public bool ACK;
+
     }
 
     // Creates various packet types (templates)
@@ -724,16 +757,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             return response;
         }
 
-        public static packet CreateGetNeighborsPacket(bool useTracking = false)
+        public static packet CreateGetNeighborsPacket()
         {
             packet response = new packet();
             response.packetType = 3;
             response.payload = "";
-
-            if (useTracking)
-            {
-                response.payload = "TR";
-            }
 
             return response;
         }
@@ -774,8 +802,16 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             return response;
         }
 
-
-
+        internal static packet CreateACK(packet incomingPacket)
+        {
+            packet response = new packet();
+            response.currentDestination = incomingPacket.previousDestination;
+            response.finalDestination = incomingPacket.previousDestination;
+            response.origin = incomingPacket.finalDestination;
+            response.ACK = false;
+            response.packetType = 9;
+            return response;
+        }
     }
 
     // Used to serialize the object and store it in XML.  // SIM ONLY
@@ -788,8 +824,8 @@ Enter 'hball' to trigger a heartbeat on each node in random order
     class networkOps
     {
         //----------  NETWORK SIZE PARAMETERS --------------
-        public static int maxNodes = 10;
-        public static int minNodes = 10;
+        public static int maxNodes = 60;
+        public static int minNodes = 60;
         public static int maxNeighbors = 3;
         //--------------------------------------------------
 
@@ -906,10 +942,18 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     Console.WriteLine("----> Node " + n.nodeID + " has only mapped " + n.pathDictionary.Count + " of " + (meshNet.Count - 1) + " nodes. " +
                         individualPercent + "%");
                     failures++;
+                    
                 }
                 else
                 {
-                    Console.WriteLine("Node " + n.nodeID + " VALID");
+                    if (RFNET.offlineNodeList.Contains(n.nodeID))
+                    {
+                        Console.WriteLine("----> Node " + n.nodeID + " is turned off");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Node " + n.nodeID + " VALID");
+                    }
                 }
             }
             int percent = 100*(meshNet.Count - failures) / meshNet.Count;
@@ -1008,9 +1052,24 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             while(RFNET.offlineNodeList.Count > 0)
             {
                 int nextNode = randomOfflineNode() - 1;
+
+                // Start a timer to see how long it takes to add this node to the network
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+
+                // Start a node
                 meshNet[nextNode].start();
-                Console.WriteLine("Turned on node " + nextNode);
+
+                // Stop the map timer
+                watch.Stop();
+
+                // Calculate and format the time that took
+                long elapsedms = watch.ElapsedMilliseconds;
+                RFNET.secondsToMap += elapsedms;
+
+                Console.WriteLine("Turned on node " + (nextNode + 1) + " in " + elapsedms + "ms");
             }
+            Console.WriteLine("Procedure took a total of " + RFNET.secondsToMap / 1000 + "s");
+            RFNET.secondsToMap = 0;
         }
         
         // Randomly selects an offline node
@@ -1045,9 +1104,20 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         {
             foreach (node n in meshNet)
             {
+                // Start a timer to see how long it takes to add this node to the network
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+
+                // Start a node
                 n.start();
-                Console.WriteLine("Turned on node " + n.nodeID);
+
+                // Calculate and format the time that took
+                long elapsedms = watch.ElapsedMilliseconds;
+                RFNET.secondsToMap += elapsedms;
+
+                Console.WriteLine("Turned on node " + (n.nodeID) + " in " + elapsedms + "ms");
             }
+            Console.WriteLine("Operation took " + RFNET.secondsToMap / 1000 + "s to complete");
+            RFNET.secondsToMap = 0;
         }
 
         // Starts a heartbeat on all online nodes in random order
