@@ -19,7 +19,7 @@ namespace MeshSim
     class RFNET
     {
         // Can be changed manually to turn debug info on/off
-        public static bool debugging = false;
+        public static bool debugging = true;
         public static long secondsToMap = 0;
         public static List<int> offlineNodeList = new List<int>();
 
@@ -317,7 +317,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         // Safely adds parent/child relationship to the tree
         public void AddToTree(int parent, int child, bool calledFromOutside = true)
         {
-            if(!meshTree.ContainsKey(parent))
+            if (!meshTree.ContainsKey(parent))
             {
                 meshTree[parent] = new List<int>(child);
             }
@@ -327,7 +327,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             }
 
             // Sew up the back side by reversing the parameters.  Boolean ensures this doesn't recurse forever.
-            if(calledFromOutside)
+            if (calledFromOutside)
                 AddToTree(child, parent, /*calledFromOutside*/false);
 
         }
@@ -413,31 +413,39 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     //    pathDictionary[incomingPacket.origin] = incomingPacket.previousDestination;
                     //}
 
-                    if(incomingPacket.packetType == 9)
+                    if (incomingPacket.packetType == 9)
                     {
                         List<string> strPayload = new List<string>(incomingPacket.payload.Split('_'));
                         strPayload.Remove("");
 
-                        if(Convert.ToInt32(strPayload[1]) != mapVersion || pathDictionary[incomingPacket.finalDestination] == incomingPacket.previousDestination)
+                        if (!pathDictionary.ContainsKey(incomingPacket.finalDestination))
+                        {
+                            Console.WriteLine("\n\nCONFLICT DETECTED: Node " + nodeID + " does not know the NH to " + incomingPacket.finalDestination + "  Will now attempt " +
+                                    "to process the tree in this packet to find another path to the destination.\n");
+                            //this
+                            ProcessIncomingMap(incomingPacket, /*pokingDisabled*/ true);
+                        }
+
+                        else if (Convert.ToInt32(strPayload[1]) != mapVersion || pathDictionary[incomingPacket.finalDestination] == incomingPacket.previousDestination)
                         {
                             if (pathDictionary.ContainsKey(incomingPacket.finalDestination) &&
                                 pathDictionary[incomingPacket.finalDestination] == incomingPacket.previousDestination)
                             {
                                 //ShowTree();
 
-                                /*Console.WriteLine("\n\nCONFLICT DETECTED: Node " + nodeID + " shows that the NH to " + incomingPacket.finalDestination + " is " +
+                                Console.WriteLine("\n\nCONFLICT DETECTED: Node " + nodeID + " shows that the NH to " + incomingPacket.finalDestination + " is " +
                                     pathDictionary[incomingPacket.finalDestination] + " which is the same as the previous destination " + incomingPacket.previousDestination +
                                     " This will likely cause a back-and-forth problem and a stack overflow. There is potentially a \"ring\" in the network.  Will now attempt " + 
-                                    "to process the tree in this packet to find another path to the destination.\n"); */
-                                    ProcessIncomingMap(incomingPacket, /*pokingDisabled*/ true);
-                                
+                                    "to process the tree in this packet to find another path to the destination.\n"); 
+                                ProcessIncomingMap(incomingPacket, /*pokingDisabled*/ true);
+
                                 //Console.WriteLine("\n Map version " + mapVersion + " (just installed) now shows that the NH to " + incomingPacket.finalDestination +
                                 //    " is " + pathDictionary[incomingPacket.finalDestination]);
 
                                 //if (incomingPacket.finalDestination == pathDictionary[incomingPacket.finalDestination])
                                 //    Console.WriteLine("\nLooks like we were missing a neighbor.  Continuing...");
                                 //else
-                                    //Console.ReadLine(); // Wait for user to read message.
+                                //Console.ReadLine(); // Wait for user to read message.
 
                             }
                         }
@@ -445,7 +453,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                         // Forcefully release memory to avoid stack overflow
                         //GC.Collect();//strPayload;
                         strPayload.Clear();
-                        
+
                     }
 
                     try
@@ -454,10 +462,10 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                         incomingPacket.previousDestination = nodeID;
 
                     }
-                    catch(Exception e)
+                    catch (Exception e)
                     {
                         // Go ahead and process the tree to see if we can find the next hop
-                        if(incomingPacket.packetType == 9)
+                        if (incomingPacket.packetType == 9)
                         {
                             ProcessIncomingMap(incomingPacket);
                         }
@@ -524,13 +532,13 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                             // Clear neighbors list
                             neighbors.Clear(); // <--- This stupid line was missing for a while...caused a big bug. APPRECIATE THIS LINE FOR A MOMENT!
 
-                            
+
                             // Do a local mapping of my own neighbors
                             packet discoverPacket = packetBuilder.CreateDiscoverRequestPacket();
                             discoverPacket.origin = nodeID;
                             discoverPacket.previousDestination = nodeID;
                             SendPacket(discoverPacket);
-                            
+
 
                             // Compile my neighbors into a string, then send that string in the payload of a type 4 response
                             string neighborListString = "";
@@ -579,7 +587,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         {
             // Prepare to format incoming tree
             Dictionary<int, List<int>> masterTree = new Dictionary<int, List<int>>();
-
+            
             string strTree = incomingPacket.payload;
 
             List<string> strDataVersion = new List<string>(strTree.Split('_'));
@@ -613,13 +621,13 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 ProcessTree(version);
             }
 
-            if(!pokingDisabled)
+            if (!pokingDisabled)
                 PokeNext(incomingPacket);
-            
+
         }
         private void PokeNext(packet passAlongNewMaster)
         {
-            
+            Console.WriteLine("Poking");
             List<int> allNodes = pathDictionary.Keys.ToList();
             allNodes.Sort();
             bool foundSomeoneToPoke = false;
@@ -635,7 +643,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     passAlongNewMaster.currentDestination = pathDictionary[i];
                     passAlongNewMaster.previousDestination = nodeID;
                     passAlongNewMaster.finalDestination = i;
-                    
+
                     //Console.WriteLine("Node " + nodeID + " poking node " + i + " via node " + pathDictionary[i]);
                     SendPacket(passAlongNewMaster);
                 }
@@ -662,6 +670,8 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         // World-wide remap
         private void WorldRemap() // PORTED
         {
+            // Dump any previous network
+            meshTree.Clear();
             // Map the network
             DoMap();
 
@@ -676,10 +686,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             int newMapVersion = nodeID;//rnd.Next(0, 255);
 
             // Set our own current map version, that way if a subsequent poke packet flies back through here, we don't process it.
-            mapVersion = newMapVersion;
+            //mapVersion = newMapVersion;
 
+            // meshTree must be updated at this point.
             // Process our own tree to be in sync with the others
-            if(meshTree.Count > 0)
+            if (meshTree.Count > 0)
                 ProcessTree();
 
             if (allNodes.Count > 0 && meshTree.Count > 0)
@@ -688,6 +699,9 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 packet masterMapPacket = packetBuilder.CreateMasterPacket(nodeID, allNodes[0], meshTree, newMapVersion);
 
                 // We will poke the lowest ID in the world (unless that's me???) TODO: Check what happens when lowest ID is the last to come online.  Appears to be ok in testing
+                Debug.Assert(pathDictionary.Count == allNodes.Count + 1);
+                
+
                 masterMapPacket.currentDestination = pathDictionary[allNodes[0]];
                 SendPacket(masterMapPacket);
             }
@@ -744,7 +758,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     // Sort the neighbors
                     neighbors.Sort();
 
-                    
+
 
                     // Add the neighbors to the queue
                     foreach (int i in neighbors)
@@ -847,11 +861,11 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         {
             Console.WriteLine("---------- Mesh Tree -----------");
             Console.WriteLine("---- Format [parent, child] ----");
-            foreach(int i in meshTree.Keys)
+            foreach (int i in meshTree.Keys)
             {
                 Console.Write("[" + i + ":");
                 string nums = "";
-                foreach(int j in meshTree[i])
+                foreach (int j in meshTree[i])
                 {
                     nums = nums + (j + ",");
                 }
@@ -873,7 +887,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 treeID = nodeID;
                 if (RFNET.debugging) { Console.WriteLine("Node " + nodeID + " processing an original map"); }
             }
-            
+
 
             Dictionary<int, int> newPD = new Dictionary<int, int>();
             //List<int> mtkeys = meshTree.Keys.ToList<int>();
@@ -888,10 +902,12 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             //newPD[nodeID] = nodeID;
 
             // Find self in tree (as a key) and add children as neighbors
+
+            Debug.Assert(meshTree.ContainsKey(nodeID));
             List<int> children = meshTree[nodeID];
 
             // Load the neighbors into the newPD
-            foreach(int c in children)
+            foreach (int c in children)
             {
                 newPD[c] = c; // Format for neighbors is FD = NH, ex. [5,5]
             }
@@ -901,14 +917,15 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             // Add a queue to store grandchildren in
             Queue<int> vertQueue = new Queue<int>();
 
-            foreach(int c in children)
+            foreach (int c in children)
             {
+                Debug.Assert(meshTree.ContainsKey(c));
                 List<int> grandchildren = new List<int>(meshTree[c]);
-                
+
                 // Add all grandchildren for this child to the map
-                foreach(int gc in grandchildren)
+                foreach (int gc in grandchildren)
                 {
-                    if(!newPD.ContainsKey(gc) && !vertQueue.Contains(gc))
+                    if (!newPD.ContainsKey(gc) && !vertQueue.Contains(gc))
                     {
                         newPD[gc] = c;
                         vertQueue.Enqueue(gc);
@@ -918,14 +935,17 @@ Enter 'hball' to trigger a heartbeat on each node in random order
 
             // Multihop
 
-            while(vertQueue.Count > 0)
+            while (vertQueue.Count > 0)
             {
                 int currentV = vertQueue.Dequeue();
 
-                foreach(int childOfQueued in meshTree[currentV])
+                Debug.Assert(meshTree.ContainsKey(currentV));
+
+                foreach (int childOfQueued in meshTree[currentV])
                 {
                     if (!newPD.ContainsKey(childOfQueued))
                     {
+                        // Insert
                         newPD[childOfQueued] = newPD[currentV];
                         vertQueue.Enqueue(childOfQueued);
                     }
@@ -937,9 +957,9 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             Debug.Assert(!newPD.Values.Contains(-1));
 
             Debug.Assert(newPD.Count == meshTree.Keys.Count);
-            
-            pathDictionary = newPD;
 
+            pathDictionary = newPD;
+            
             mapVersion = treeID;
 
         }
@@ -960,7 +980,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
         //    }
 
         //    // No parents of <remoteNode> are known either (most common in distant mapping)
-            
+
 
         //    return result;
         //}
@@ -1081,15 +1101,15 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             response.finalDestination = toHim;
             response.previousDestination = fromMe;
             response.origin = fromMe;
-            
+
 
             // Construct a string with the network in it.
             string payload = "";
 
-            foreach(int i in meshTree.Keys)
+            foreach (int i in meshTree.Keys)
             {
                 payload += i + ":";
-                foreach(int j in meshTree[i])
+                foreach (int j in meshTree[i])
                 {
                     payload += j + ",";
                 }
@@ -1115,8 +1135,8 @@ Enter 'hball' to trigger a heartbeat on each node in random order
     class networkOps
     {
         //----------  NETWORK SIZE PARAMETERS --------------
-        public static int maxNodes = 254;
-        public static int minNodes = 254;
+        public static int maxNodes = 100;
+        public static int minNodes = 100;
         public static int maxNeighbors = 3;
         //--------------------------------------------------
 
@@ -1243,7 +1263,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                     }
                     else
                     {
-                        Console.WriteLine("Node " + n.nodeID + " VALID --> map version " + n.mapVersion );
+                        Console.WriteLine("Node " + n.nodeID + " VALID --> map version " + n.mapVersion);
                     }
                 }
             }
@@ -1254,7 +1274,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
             // Print out a check on map versions
             List<int> versions = new List<int>();
 
-            foreach(node n in meshNet) { versions.Add(n.mapVersion); }
+            foreach (node n in meshNet) { versions.Add(n.mapVersion); }
 
             if (versions.Distinct().Skip(1).Any())
             {
@@ -1265,7 +1285,7 @@ Enter 'hball' to trigger a heartbeat on each node in random order
                 Console.WriteLine("Success: all map versions are the same.");
             }
 
-                if (percent < 100)
+            if (percent < 100)
             {
                 //Console.WriteLine("This is most likely due to the fact that the network generator has a small chance of generating a network " +
                 //    "that actually has two seperate sections that have no path to connect to each other.  Basically, there are two or more networks " +
